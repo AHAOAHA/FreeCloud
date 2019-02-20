@@ -4,13 +4,11 @@
 *mail: ahaoaha_@outlook.com
 *Created Time: 2019年02月19日 星期二 14时42分36秒
  ************************************************************************/
-#pragma once
+#ifndef __HTTP_SERVER_HPP__
+#define __HTTP_SERVER_HPP__
+
 #include "Utils.hpp"
 #include "ThreadPool.hpp"
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <sys/types.h>
-#include <string.h>
 
 #define MAX_CLIENTNUM 5
 
@@ -26,6 +24,10 @@ class HttpServer {
         cerr << "socket error" << endl;
         return false;
       }
+      //设置服务器立即重启
+     int opt = 1;
+     setsockopt(_serv_sock, SOL_SOCKET, SO_REUSEADDR, (void*)&opt, sizeof(int));
+
       sockaddr_in serv_addr;
       bzero(&serv_addr, sizeof(sockaddr_in));
       serv_addr.sin_family = AF_INET;
@@ -48,7 +50,9 @@ class HttpServer {
     {}
 
     void Start(uint16_t port, handler_t handler) {
-      HttpServerInit(port);
+      if(HttpServerInit(port) == false) {
+        return;
+      }
 
       while(1) {
         sockaddr_in cli_addr;
@@ -58,11 +62,11 @@ class HttpServer {
           cerr << "accept error" << endl;
           continue;
         }
-
         //创建HttpTask
-        HttpTask tt(cli_sock, handler);
+        HttpTask* tt = new HttpTask(cli_sock, handler);
         _thr.PushTask(tt);
       }
-
     }
 };
+
+#endif

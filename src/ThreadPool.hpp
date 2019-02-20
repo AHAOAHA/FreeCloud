@@ -4,16 +4,16 @@
 *mail: ahaoaha_@outlook.com
 *Created Time: 2019年02月19日 星期二 14时42分01秒
  ************************************************************************/
-#pragma once
+#ifndef __THREAD_POOL_HPP__
+#define __THREAD_POOL_HPP__
+
 #include "Utils.hpp"
-#include <pthread.h>
-#include <queue>
 
 class ThreadPool {
   private:
     int _thr_num; //记录线程池中线程数量
     bool _is_stop;  //标记线程池是否停止
-    std::queue<HttpTask> _task_queue; //任务队列
+    std::queue<HttpTask*> _task_queue; //任务队列
     pthread_cond_t _cond; //条件变量
     pthread_mutex_t _lock;  //锁
 
@@ -29,14 +29,19 @@ class ThreadPool {
           if(tp->IsStop())
           {
             tp->UnlockQueue();
-            pthread_exit(NULL);
+            tp->ThreadExit();
           }
           tp->ThreadWait();
         }
-        HttpTask tt = tp->PopTask();
+        HttpTask* tt = tp->PopTask();
         tp->UnlockQueue();
-        tt.Run();
+        tt->Run();
       }
+    }
+    void ThreadExit()
+    {
+      __sync_fetch_and_sub(&_thr_num, 1); //原子变量自减1 
+      pthread_exit(NULL);
     }
     void LockQueue() {
       pthread_mutex_lock(&_lock);
@@ -50,9 +55,9 @@ class ThreadPool {
     bool QueueEmpty() {
       return _task_queue.empty();
     }
-    HttpTask PopTask()
+    HttpTask* PopTask()
     {
-      HttpTask tt = _task_queue.front();
+      HttpTask* tt = _task_queue.front();
       _task_queue.pop();
       return tt;
     }
@@ -94,10 +99,9 @@ class ThreadPool {
       return true;
     }
 
-    void PushTask(HttpTask tt) {
-      HttpTask* task = new HttpTask(tt);
+    void PushTask(HttpTask* tt) {
       LockQueue();
-      _task_queue.push(*task);
+      _task_queue.push(tt);
       UnlockQueue();
       WakeupOne();
     }
@@ -106,3 +110,5 @@ class ThreadPool {
       _is_stop = true;
     }
 };
+
+#endif
