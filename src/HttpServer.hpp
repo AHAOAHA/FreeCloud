@@ -85,6 +85,7 @@ bool handler(int sock) {
     goto end;
   }
 
+  cout << "connect parse success" << endl;
   req.GetRequestInfo(req_info);
 
   if(rsp.ResponseHandler(req_info) == false) {

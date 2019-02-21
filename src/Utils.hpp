@@ -7,6 +7,8 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
+#include <sys/sendfile.h>
+#include <dirent.h>
 #include <string>
 #include <unordered_map>
 #include <sys/stat.h>
@@ -21,6 +23,8 @@
 #include <queue>
 #include <arpa/inet.h>
 #include <unordered_map>
+#include <fcntl.h>
+
 
 #define MAX_HEADERSIZE 4096
 
@@ -33,7 +37,17 @@ std::unordered_map<std::string, std::string> ErrorCode({ \
     {"400", "Bad Request"}, \
     {"404", "Not Found"}, \
     {"414", "Request-URL Too Long"}, \
-    {"500", "Internal Server Error"}});
+    {"500", "Internal Server Error"} \
+    });
+std::unordered_map<std::string, std::string> FileType({ \
+    {".txt", "text/plain"}, \
+    {".doc", "application/msword"}, \
+    {".html", "text/html"}, \
+    {".htx", "text/html"}, \
+    {".ico", "image/x-icon"}, \
+    {".img", "application/x-img"}, \
+    {".java", "java/*"} \
+    });
 
 typedef bool (*handler_t)(int sock);
 class RequestInfo { //记录http解析出来的请求信息
@@ -144,7 +158,7 @@ class HttpRequest {
         _req_info._query_string = v_path_query[1];
       }
       _req_info._path_info = v_path_query[0];
-      _req_info._path_phys = ".";
+      _req_info._path_phys = "./www";
       _req_info._path_phys += _req_info._path_info;
 
       //将头部信息存储进键值对
@@ -183,11 +197,47 @@ class HttpResponse {
     std::string _cont_len;
 
   private:
-    bool PrecessFile(const RequestInfo& req_info);
-    bool ProcessList(const RequestInfo& req_info);
     bool ProcessCGI(const RequestInfo& req_info);
     bool CGIHandler(const RequestInfo& req_info);
-    bool FileHandler(const RequestInfo& req_info);
+    bool ProcessFile(const std::string& file_path) {
+      std::string file_hdr;
+
+      OrganizeFileHdr(file_path, file_hdr);
+
+      SendData(file_hdr);
+      SendFile(file_path);
+
+      return true;
+    }
+    bool ProcessList(const std::string& file_path) {
+      std::string list_hdr;
+      std::string list_body;
+
+      OrganizeListHdr(list_hdr, file_path);
+      OrganizeListBody(list_body, file_path);
+      
+      SendData(list_hdr);
+      SendData(list_body);
+      return true;
+    }
+    bool FileHandler(std::string file_path, struct stat & file_st) {
+      //判断目标资源是文件还是目录
+      if(file_st.st_mode & S_IFDIR) {
+        //是一个目录
+        if(file_path.back() != '/') {
+          file_path += "/";
+        }
+        if(ProcessList(file_path) == false) {
+          return false;
+        }
+        return true;
+      }
+
+      if(ProcessFile(file_path) == false) {
+        return false;
+      }
+      return true;
+    }
     bool ErrHandler(const RequestInfo& req_info, const std::string &err_code) {
       //组织404头部信息
       std::string err_hdr;
@@ -202,6 +252,96 @@ class HttpResponse {
     }
 
   private:
+    bool SendFile(const std::string& file_path) {
+      int file_fd = open(file_path.c_str(), O_RDONLY);
+      if(file_fd < 0) {
+        //TODO
+      }
+      struct stat st;
+      stat(file_path.c_str(), &st);
+      if(sendfile(_cli_sock, file_fd, NULL, st.st_size) < 0) {
+        return false;
+      }
+      return true;
+    }
+    bool OrganizeFileHdr(const std::string& file_name, std::string& file_hdr) {
+      file_hdr += "HTTP/1.1 200 OK\r\n";
+      file_hdr += "Date: ";
+      std::string date_gmt;
+      Utils::TimeToGMT(date_gmt);
+      file_hdr += date_gmt;
+      file_hdr += "\r\n";
+      file_hdr += "Content-Type: ";
+      std::string file_type;
+      OrganizeFileType(file_name, file_type);
+      file_hdr += file_type;
+      file_hdr += "\r\n\r\n";
+    }
+    void OrganizeFileType(const std::string& file_name, std::string& file_type) {
+      size_t pos = 0;
+      pos = file_name.rfind(".");
+      if(pos == std::string::npos) {
+        file_type = "application/octet-stream";
+        return;
+      }
+
+      std::string suffix;
+      suffix.assign(file_name, pos, file_name.size() - 1);
+      auto it = FileType.begin();
+      for(it = FileType.begin(); it != FileType.end(); ++it)
+      {
+        if(it->first == suffix)
+        {
+          break;
+        }
+      }
+
+      if(it != FileType.end()) {
+        file_type = it->second;
+      }
+      else {
+        file_type = "application/octet-stream";
+      }
+    }
+    bool OrganizeListHdr(std::string& list_hdr, const std::string& file_path) {
+      list_hdr = "HTTP/1.1 200 OK\r\n";
+      list_hdr += "Date: ";
+      std::string date_gmt;
+      Utils::TimeToGMT(date_gmt);
+      list_hdr += date_gmt;
+      list_hdr += "\r\n";
+      list_hdr += "Content-Type: text/html\r\n\r\n";
+      return true;
+    }
+    bool OrganizeListBody(std::string& list_body, const std::string& file_path) {
+      std::string path = file_path;
+      struct dirent **p_dirent = NULL;
+      int num = scandir(path.c_str(), &p_dirent, 0, alphasort);
+
+      list_body += "<html><body><h1>Index:/";
+      list_body += "</h1>";
+      list_body += "<hr /><ol>";
+
+      for(int i =0; i < num; ++i) {
+        list_body += "<li>";
+        //当前文件文件文件全路径
+        std::string file = path + p_dirent[i]->d_name;
+        struct stat st;
+        if(stat(file.c_str(), &st) < 0) {
+          continue;
+        }
+
+        //std::string mtime;
+        list_body += "<strong><a href='";
+        list_body += p_dirent[i]->d_name;
+        list_body += "'>";
+        list_body += p_dirent[i]->d_name;
+        list_body += "</a></strong></li>";
+        
+      }
+      list_body += "</ol></body></html>";
+      return true;
+    }
     void OrganizeErrHdr(const RequestInfo& req_info, const std::string &err_code, std::string& err_hdr) {
       //首行
       err_hdr += req_info._version;
@@ -265,7 +405,7 @@ class HttpResponse {
         return true;
       }
 
-      //FileHandler(req_info);
+      FileHandler(req_info._path_phys, file_st);
       return true;
     }
 };
