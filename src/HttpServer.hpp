@@ -69,4 +69,35 @@ class HttpServer {
     }
 };
 
+bool handler(int sock) {
+  std::string hdr;  //保存接受到的头部信息
+  HttpRequest req;
+  HttpResponse rsp;
+  RequestInfo req_info;
+  req.HttpRequestInit(sock);
+  rsp.HttpResponseInit(sock);
+  //接受http请求头
+  if(req.FetchHttpHeader() == false) {
+    goto end;
+  }
+  //解析头部信息
+  if(req.ParseHttpHeader() == false) {
+    goto end;
+  }
+
+  req.GetRequestInfo(req_info);
+
+  if(rsp.ResponseHandler(req_info) == false) {
+    goto end;
+  }
+
+  //req.ShowHeader();
+
+  close(sock);
+  return true;
+
+end:
+  close(sock);
+  return false;
+}
 #endif

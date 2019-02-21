@@ -22,18 +22,18 @@
 #include <arpa/inet.h>
 #include <unordered_map>
 
-#define MAX_BUFSIZE 4096
+#define MAX_HEADERSIZE 4096
 
 using std::cout;
 using std::endl;
 using std::cerr;
 
 std::unordered_map<std::string, std::string> ErrorCode({ \
-    {"200", " OK\r\n"}, \
-    {"400", " Bad Request\r\n"}, \
-    {"404", " Not Found\r\n"}, \
-    {"414", " Request-URL Too Long\r\n"}, \
-    {"500", " Internal Server Error\r\n"}});
+    {"200", "OK"}, \
+    {"400", "Bad Request"}, \
+    {"404", "Not Found"}, \
+    {"414", "Request-URL Too Long"}, \
+    {"500", "Internal Server Error"}});
 
 typedef bool (*handler_t)(int sock);
 class RequestInfo { //记录http解析出来的请求信息
@@ -62,96 +62,242 @@ class HttpTask {
 
 };
 
-
-bool FetchHttpHeader(int sock, std::string& hdr)
-{
-  char buf[MAX_BUFSIZE] = {0};
-  while(1) {
-    int ret = recv(sock, buf, MAX_BUFSIZE, MSG_PEEK); //MSG_PEEK指从接受缓冲区中查看数据，但不会拿走数据
-    if(ret < 0) { // <0 代表读取出错
-      if(errno == EINTR || errno == EAGAIN)
-      {
-        continue;
+class Utils {
+  public:
+    static void HdrCutByStr(const std::string hdr, const std::string cut_str, std::vector<std::string> &v_info) {
+      size_t start = 0;
+      size_t pos = 0;
+      std::string val;
+      while(pos != std::string::npos) {
+        pos = hdr.find(cut_str, start);
+        val.assign(hdr, start, pos - start);
+        v_info.push_back(val);
+        val.resize(0);
+        start = pos + cut_str.size();
       }
-      return false;
     }
 
-    char* ptr = strstr(buf, "\r\n\r\n");
-    if(ptr == NULL) {
-      if(ret >= MAX_BUFSIZE)
+    static void TimeToGMT(std::string& date_gmt) {
+      char tmp[128] = {0};
+      time_t t = time(NULL);
+      struct tm* date_tm;
+      date_tm = gmtime(&t);
+      strftime(tmp, 127, "%a, %d %b %Y %H:%M:%S GMT", date_tm);
+      date_gmt = tmp;
+    }
+};
+
+class HttpRequest {
+  private:
+    int _cli_sock;
+    RequestInfo _req_info;
+    std::string _hdr;
+  public:
+    HttpRequest(): _cli_sock(-1) 
+    {}
+
+    void HttpRequestInit(int sock)
+    {
+      _cli_sock = sock;
+    }
+
+    bool FetchHttpHeader() {
+      char buf[MAX_HEADERSIZE] = {0};
+      while(1) {
+        int ret = recv(_cli_sock, buf, MAX_HEADERSIZE, MSG_PEEK); //MSG_PEEK指从接受缓冲区中查看数据，但不会拿走数据
+        if(ret < 0) { // <0 代表读取出错
+          if(errno == EINTR || errno == EAGAIN) {
+            continue;
+          }
+          return false;
+        }
+
+        char* ptr = strstr(buf, "\r\n\r\n");
+        if(ptr == NULL) {
+          if(ret >= MAX_HEADERSIZE) {
+            cerr << "header too long" <<endl;
+            return false;
+          }
+        }
+        else {
+          int hdr_lenth = ptr - buf;
+          _hdr.assign(buf, hdr_lenth);
+          recv(_cli_sock, buf, hdr_lenth + 4, 0);
+          break;
+        }
+      }
+      return true;
+    }
+
+    bool ParseHttpHeader() {
+      std::vector<std::string> v_info;  //将头部的信息存储进vector中
+      Utils::HdrCutByStr(_hdr, "\r\n", v_info); //将头部信息切割并存储进vector
+
+      std::vector<std::string> v_first_line;
+      Utils::HdrCutByStr(v_info[0], " ", v_first_line);  //将首行的信息保存在v_first_line
+      _req_info._method = v_first_line[0];
+      _req_info._version = v_first_line[2];
+      std::vector<std::string> v_path_query;
+      Utils::HdrCutByStr(v_first_line[1], "?", v_path_query);
+      if(v_path_query.size() == 2)
       {
-        cerr << "header too long" <<endl;
+        _req_info._query_string = v_path_query[1];
+      }
+      _req_info._path_info = v_path_query[0];
+      _req_info._path_phys = ".";
+      _req_info._path_phys += _req_info._path_info;
+
+      //将头部信息存储进键值对
+      std::vector<std::string> v_hdr_pair;
+      for(size_t i = 1; i < v_info.size(); ++i)
+      {
+        Utils::HdrCutByStr(v_info[i], ": ", v_hdr_pair);
+        _req_info._hdr_list[v_hdr_pair[0]] = v_hdr_pair[1];
+        v_hdr_pair.resize(0);
+      }
+      return true;
+    }
+
+    void ShowHeader()
+    {
+      cout << _hdr << endl << endl << endl;
+    }
+
+    void GetRequestInfo(RequestInfo& req_info) {
+      req_info._hdr_list = _req_info._hdr_list;
+      req_info._method = _req_info._method;
+      req_info._path_info = _req_info._path_info;
+      req_info._path_phys = _req_info._path_phys;
+      req_info._query_string = _req_info._query_string;
+      req_info._st = _req_info._st;
+      req_info._version = _req_info._version;
+    }
+
+};
+
+class HttpResponse {
+  private:
+    int _cli_sock;
+    std::string _stag;
+    std::string _mtime; //最后一次修改时间
+    std::string _cont_len;
+
+  private:
+    bool PrecessFile(const RequestInfo& req_info);
+    bool ProcessList(const RequestInfo& req_info);
+    bool ProcessCGI(const RequestInfo& req_info);
+    bool CGIHandler(const RequestInfo& req_info);
+    bool FileHandler(const RequestInfo& req_info);
+    bool ErrHandler(const RequestInfo& req_info, const std::string &err_code) {
+      //组织404头部信息
+      std::string err_hdr;
+      std::string err_body;
+
+      OrganizeErrHdr(req_info, err_code, err_hdr);
+      OrganizeErrBody(err_code, err_body);
+
+      SendData(err_hdr);
+      SendData(err_body);
+      return true;
+    }
+
+  private:
+    void OrganizeErrHdr(const RequestInfo& req_info, const std::string &err_code, std::string& err_hdr) {
+      //首行
+      err_hdr += req_info._version;
+      err_hdr += " ";
+      err_hdr += err_code;
+      err_hdr += " ";
+      err_hdr += ErrorCode[err_code];
+      err_hdr += "\r\n";
+
+      //Content-Type
+      err_hdr += "Content-Type: text/html\r\n";
+      //Date标签信息
+      std::string date_gmt;
+      Utils::TimeToGMT(date_gmt);
+      err_hdr += "Date: ";
+      err_hdr += date_gmt;
+      err_hdr += "\r\n\r\n";
+
+      
+    }
+
+    void OrganizeErrBody(const std::string &err_code, std::string& err_body) {
+      err_body += "<html><body><h1>";
+      err_body += err_code;
+      err_body += "</h1><h2>";
+      err_body += ErrorCode[err_code];
+      err_body += "</h2></body></html>";
+    }
+
+    bool SendData(std::string data) {
+      if(send(_cli_sock, data.c_str(), data.size(), 0) == -1) {
         return false;
       }
+      return true;
     }
-    else {
-      int hdr_lenth = ptr - buf;
-      hdr.assign(buf, hdr_lenth);
-      recv(sock, buf, hdr_lenth + 4, 0);
-      break;
+
+  public:
+    HttpResponse(): _cli_sock(-1)
+    {}
+
+    bool HttpResponseInit(int sock) {
+      _cli_sock = sock;
+      return true;
     }
-  }
-  return true;
-}
 
-void HdrCutByStr(const std::string hdr, const std::string cut_str, std::vector<std::string> &v_info) {
-  size_t start = 0;
-  size_t pos = 0;
-  std::string val;
-  while(pos != std::string::npos) {
-    pos = hdr.find(cut_str, start);
-    val.assign(hdr, start, pos - start);
-    v_info.push_back(val);
-    val.resize(0);
-    start = pos + cut_str.size();
-  }
-}
+    bool ResponseHandler(const RequestInfo& req_info) {
+      //判断是否为CGI请求
+      if((req_info._method == "GET" && !req_info._query_string.empty()) || \
+          req_info._method == "POST") {
+        //处理CGI请求
+        //CGIHandler(req_info);
+        return true;
+      }
 
+      //判断请求资源是否存在
+      std::string file_path = req_info._path_phys;
+      struct stat file_st;
+      if(stat(file_path.c_str(), &file_st) < 0) {
+        //请求资源不存在，返回404页面
+        ErrHandler(req_info, "404");
+        return true;
+      }
 
-bool ParseHttpHeader(std::string hdr, RequestInfo& hdr_info) {
-  std::vector<std::string> v_info;  //将头部的信息存储进vector中
-  HdrCutByStr(hdr, "\r\n", v_info); //将头部信息切割并存储进vector
-  
-  std::vector<std::string> v_first_line;
-  HdrCutByStr(v_info[0], " ", v_first_line);  //将首行的信息保存在v_first_line
-  hdr_info._method = v_first_line[0];
-  hdr_info._version = v_first_line[2];
-  std::vector<std::string> v_path_query;
-  HdrCutByStr(v_first_line[1], "?", v_path_query);
-  if(v_path_query.size() == 2)
-  {
-    hdr_info._query_string = v_path_query[1];
-  }
-  hdr_info._path_info = v_path_query[0];
-  hdr_info._path_phys = ".";
-  hdr_info._path_phys += hdr_info._path_info;
+      //FileHandler(req_info);
+      return true;
+    }
+};
+/*
 
-  //将头部信息存储进键值对
-  std::vector<std::string> v_hdr_pair;
-  for(size_t i = 1; i < v_info.size(); ++i)
-  {
-    HdrCutByStr(v_info[i], ": ", v_hdr_pair);
-    hdr_info._hdr_list[v_hdr_pair[0]] = v_hdr_pair[1];
-    v_hdr_pair.resize(0);
-  }
-  return true;
-}
 void MakeErrPage(std::string& err_page, const std::string& err_code) {
   err_page += "";
+}
+
+void MakeErrHdr(std::string& err_hdr, const std::string& err_code) {
+  err_hdr += "HTTP/1.1 "; //组织首行
+  err_hdr += err_hdr;
+  err_hdr += " ";
+  err_hdr += ErrorCode[err_code];
+  err_hdr += "\r\n";
+
+  std::string date_gmt; //组织Date标签信息
+  Utils::TimeToGMT(date_gmt);
+  err_hdr += date_gmt;
+  err_hdr += "\r\n";
 }
 
 bool SendErrorPage(int sock, const std::string err_code) {
   std::string err_page;
   std::string err_hdr;
-  err_hdr += "HTTP/1.1 ";
-  err_hdr += err_code;
-  err_hdr += ErrorCode[err_code];
+  MakeErrHdr(err_hdr, err_code);
+  
 
   MakeErrPage(err_page, err_code);
 }
 
-bool FileRequest(int sock, const RequestInfo& hdr_info)
-{
+bool FileRequest(int sock, const RequestInfo& hdr_info) {
   //判断是文件请求还是列表请求
   std::string path = hdr_info._path_phys;
   struct stat file_st;
@@ -173,36 +319,5 @@ bool FileRequest(int sock, const RequestInfo& hdr_info)
   return true;
 }
 
-bool handler(int sock)
-{
-  std::string hdr;  //保存接受到的头部信息
-  RequestInfo hdr_info; //保存解析出来的http头信息
-  //接受http请求头
-  if(FetchHttpHeader(sock, hdr) == false) {
-    goto end;
-  }
-  //解析头部信息
-  if(ParseHttpHeader(hdr, hdr_info) == false) {
-    goto end;
-  }
-
-  //判断请求是否为CGI请求
-  if((hdr_info._method == "GET" && hdr_info._query_string.empty()) ||
-      hdr_info._method == "POST") {
-    //处理CGI请求
-  }
-
-  else {
-    //处理非CGI请求
-    FileRequest(sock, hdr_info);  
-  }
-
-  close(sock);
-  return true;
-end:
-  close(sock);
-  return false;
-}
-
-
+*/
 #endif
