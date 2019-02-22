@@ -62,15 +62,21 @@ class RequestInfo { //记录http解析出来的请求信息
 };
 
 class HttpTask {
-  private:
+  public:
     int _cli_sock;  //记录客户端sock
     handler_t _task_handler;  //处理方法
   public:
     HttpTask(int sock, handler_t handler): _cli_sock(sock), _task_handler(handler)  //创建线程池中的任务 
     {}
 
-    void Run()
+    ~HttpTask()
     {
+      cout << "task over" << endl;
+      close(_cli_sock);
+    }
+
+    void Run() {
+      cout << "task run success" << endl;
       _task_handler(_cli_sock);
     }
 
@@ -91,9 +97,8 @@ class Utils {
       }
     }
 
-    static void TimeToGMT(std::string& date_gmt) {
+    static void TimeToGMT(time_t& t, std::string& date_gmt) {
       char tmp[128] = {0};
-      time_t t = time(NULL);
       struct tm* date_tm;
       date_tm = gmtime(&t);
       strftime(tmp, 127, "%a, %d %b %Y %H:%M:%S GMT", date_tm);
@@ -116,8 +121,9 @@ class HttpRequest {
     }
 
     bool FetchHttpHeader() {
-      char buf[MAX_HEADERSIZE] = {0};
+      cout << "fetch begin" << endl;
       while(1) {
+        char buf[MAX_HEADERSIZE] = {0};
         int ret = recv(_cli_sock, buf, MAX_HEADERSIZE, MSG_PEEK); //MSG_PEEK指从接受缓冲区中查看数据，但不会拿走数据
         if(ret < 0) { // <0 代表读取出错
           if(errno == EINTR || errno == EAGAIN) {
@@ -132,6 +138,9 @@ class HttpRequest {
             cerr << "header too long" <<endl;
             return false;
           }
+          else if(ret == 0) {
+            return false;
+          }
         }
         else {
           int hdr_lenth = ptr - buf;
@@ -140,6 +149,7 @@ class HttpRequest {
           break;
         }
       }
+      cout << "fetch req success" << endl;
       return true;
     }
 
@@ -169,12 +179,13 @@ class HttpRequest {
         _req_info._hdr_list[v_hdr_pair[0]] = v_hdr_pair[1];
         v_hdr_pair.resize(0);
       }
+      cout << "prase req success" << endl;
       return true;
     }
 
     void ShowHeader()
     {
-      cout << _hdr << endl << endl << endl;
+      cout << "header["<<_hdr <<"]"<< endl << endl << endl;
     }
 
     void GetRequestInfo(RequestInfo& req_info) {
@@ -230,20 +241,22 @@ class HttpResponse {
         if(ProcessList(file_path) == false) {
           return false;
         }
+        cout << "ListHandler success" << endl;
         return true;
       }
 
       if(ProcessFile(file_path) == false) {
         return false;
       }
+      cout << "FileHandler success" << endl;
       return true;
     }
-    bool ErrHandler(const RequestInfo& req_info, const std::string &err_code) {
-      //组织404头部信息
+    bool ErrHandler(const std::string &err_code) {
+      //组织err头部信息
       std::string err_hdr;
       std::string err_body;
 
-      OrganizeErrHdr(req_info, err_code, err_hdr);
+      OrganizeErrHdr(err_code, err_hdr);
       OrganizeErrBody(err_code, err_body);
 
       SendData(err_hdr);
@@ -268,7 +281,8 @@ class HttpResponse {
       file_hdr += "HTTP/1.1 200 OK\r\n";
       file_hdr += "Date: ";
       std::string date_gmt;
-      Utils::TimeToGMT(date_gmt);
+      time_t t = time(NULL);
+      Utils::TimeToGMT(t, date_gmt);
       file_hdr += date_gmt;
       file_hdr += "\r\n";
       file_hdr += "Content-Type: ";
@@ -307,7 +321,8 @@ class HttpResponse {
       list_hdr = "HTTP/1.1 200 OK\r\n";
       list_hdr += "Date: ";
       std::string date_gmt;
-      Utils::TimeToGMT(date_gmt);
+      time_t t = time(NULL);
+      Utils::TimeToGMT(t, date_gmt);
       list_hdr += date_gmt;
       list_hdr += "\r\n";
       list_hdr += "Content-Type: text/html\r\n\r\n";
@@ -336,15 +351,21 @@ class HttpResponse {
         list_body += p_dirent[i]->d_name;
         list_body += "'>";
         list_body += p_dirent[i]->d_name;
-        list_body += "</a></strong></li>";
+        list_body += "</a></strong>";
+        std::string mtime;
+        Utils::TimeToGMT(st.st_ctime, mtime);
+        list_body += "<br><small>";
+        list_body += mtime;
+        list_body += "</small>";
+        list_body += "</li><br>";
         
       }
       list_body += "</ol></body></html>";
       return true;
     }
-    void OrganizeErrHdr(const RequestInfo& req_info, const std::string &err_code, std::string& err_hdr) {
+    void OrganizeErrHdr(const std::string &err_code, std::string& err_hdr) {
       //首行
-      err_hdr += req_info._version;
+      err_hdr += "HTTP/1.1";
       err_hdr += " ";
       err_hdr += err_code;
       err_hdr += " ";
@@ -355,7 +376,8 @@ class HttpResponse {
       err_hdr += "Content-Type: text/html\r\n";
       //Date标签信息
       std::string date_gmt;
-      Utils::TimeToGMT(date_gmt);
+      time_t t = time(NULL);
+      Utils::TimeToGMT(t, date_gmt);
       err_hdr += "Date: ";
       err_hdr += date_gmt;
       err_hdr += "\r\n\r\n";
@@ -401,7 +423,8 @@ class HttpResponse {
       struct stat file_st;
       if(stat(file_path.c_str(), &file_st) < 0) {
         //请求资源不存在，返回404页面
-        ErrHandler(req_info, "404");
+        ErrHandler("404");
+        cout << "errhandler success" << endl;
         return true;
       }
 

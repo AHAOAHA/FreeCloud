@@ -12,6 +12,7 @@
 class ThreadPool {
   private:
     int _thr_num; //记录线程池中线程数量
+    int _thr_free_num;  //记录空闲线程数量
     bool _is_stop;  //标记线程池是否停止
     std::queue<HttpTask*> _task_queue; //任务队列
     pthread_cond_t _cond; //条件变量
@@ -21,21 +22,27 @@ class ThreadPool {
     static void* _thr_start(void *arg)
     {
       ThreadPool* tp = (ThreadPool*)arg;
-      for(;;)
-      {
+      for(;;) {
         tp->LockQueue();
-        while(tp->QueueEmpty())
-        {
+        while(tp->QueueEmpty()) {
+          /*
           if(tp->IsStop())
           {
+            cout << "dead lock" << endl;
             tp->UnlockQueue();
             tp->ThreadExit();
           }
+          */
           tp->ThreadWait();
         }
         HttpTask* tt = tp->PopTask();
         tp->UnlockQueue();
+        __sync_fetch_and_sub(&tp->_thr_free_num, 1); //原子变量自减1 
         tt->Run();
+
+        delete tt;
+        cout << "resp over" << endl;
+        __sync_fetch_and_add(&tp->_thr_free_num, 1);
       }
     }
     void ThreadExit()
@@ -62,6 +69,7 @@ class ThreadPool {
       return tt;
     }
     void WakeupOne() {
+      cout << "wakeup one" << endl;
       pthread_cond_signal(&_cond);
     }
     void WakeupAll() {
@@ -72,7 +80,7 @@ class ThreadPool {
     }
 
   public:
-    ThreadPool(int num = 5):_thr_num(num), _is_stop(false)    {}
+    ThreadPool(int num = 1):_thr_num(num), _thr_free_num(num), _is_stop(false)    {}
     bool ThreadInit()
     {
       pthread_t tid;
@@ -101,8 +109,10 @@ class ThreadPool {
 
     void PushTask(HttpTask* tt) {
       LockQueue();
+      cout << "taskpush success " << "client: "<< tt->_cli_sock << "handler" <<tt->_task_handler<<endl;
       _task_queue.push(tt);
       UnlockQueue();
+      usleep(1000);
       WakeupOne();
     }
 
