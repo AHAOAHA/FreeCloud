@@ -25,14 +25,11 @@ class ThreadPool {
       for(;;) {
         tp->LockQueue();
         while(tp->QueueEmpty()) {
-          /*
           if(tp->IsStop())
           {
-            cout << "dead lock" << endl;
             tp->UnlockQueue();
             tp->ThreadExit();
           }
-          */
           tp->ThreadWait();
         }
         HttpTask* tt = tp->PopTask();
@@ -41,7 +38,6 @@ class ThreadPool {
         tt->Run();
 
         delete tt;
-        cout << "resp over" << endl;
         __sync_fetch_and_add(&tp->_thr_free_num, 1);
       }
     }
@@ -69,7 +65,6 @@ class ThreadPool {
       return tt;
     }
     void WakeupOne() {
-      cout << "wakeup one" << endl;
       pthread_cond_signal(&_cond);
     }
     void WakeupAll() {
@@ -109,7 +104,6 @@ class ThreadPool {
 
     void PushTask(HttpTask* tt) {
       LockQueue();
-      cout << "taskpush success " << "client: "<< tt->_cli_sock << "handler" <<tt->_task_handler<<endl;
       _task_queue.push(tt);
       UnlockQueue();
       usleep(1000);

@@ -7,6 +7,7 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
+#include <sys/wait.h>
 #include <sys/sendfile.h>
 #include <dirent.h>
 #include <string>
@@ -27,6 +28,7 @@
 
 
 #define MAX_HEADERSIZE 4096
+#define MAX_BUFF 4096
 
 using std::cout;
 using std::endl;
@@ -71,12 +73,10 @@ class HttpTask {
 
     ~HttpTask()
     {
-      cout << "task over" << endl;
       close(_cli_sock);
     }
 
     void Run() {
-      cout << "task run success" << endl;
       _task_handler(_cli_sock);
     }
 
@@ -97,12 +97,22 @@ class Utils {
       }
     }
 
+    static int64_t StrToNum(std::string str) {
+      return strtol(str.c_str(), NULL, 10);
+    }
+
     static void TimeToGMT(time_t& t, std::string& date_gmt) {
       char tmp[128] = {0};
       struct tm* date_tm;
       date_tm = gmtime(&t);
       strftime(tmp, 127, "%a, %d %b %Y %H:%M:%S GMT", date_tm);
       date_gmt = tmp;
+    }
+
+    static void NumToStr(size_t num, std::string& tm_str) {
+      char buf[128] = {0};
+      snprintf(buf, 127, "%d", num);
+      tm_str = buf;
     }
 };
 
@@ -121,7 +131,6 @@ class HttpRequest {
     }
 
     bool FetchHttpHeader() {
-      cout << "fetch begin" << endl;
       while(1) {
         char buf[MAX_HEADERSIZE] = {0};
         int ret = recv(_cli_sock, buf, MAX_HEADERSIZE, MSG_PEEK); //MSG_PEEK指从接受缓冲区中查看数据，但不会拿走数据
@@ -149,7 +158,6 @@ class HttpRequest {
           break;
         }
       }
-      cout << "fetch req success" << endl;
       return true;
     }
 
@@ -179,7 +187,6 @@ class HttpRequest {
         _req_info._hdr_list[v_hdr_pair[0]] = v_hdr_pair[1];
         v_hdr_pair.resize(0);
       }
-      cout << "prase req success" << endl;
       return true;
     }
 
@@ -208,8 +215,99 @@ class HttpResponse {
     std::string _cont_len;
 
   private:
-    bool ProcessCGI(const RequestInfo& req_info);
-    bool CGIHandler(const RequestInfo& req_info);
+    bool ProcessCGI(const RequestInfo& req_info) {
+      //使用外部程序完成CGI请求
+      //将HTTP头信息和正文全部交给子进程处理
+      //使用环境变量传递头信息
+      //使用管道传递正文
+      //使用管道接受返回信息
+      int in[2];
+      int out[2];
+      if(pipe(in) || pipe(out)) {
+        //创建管道失败
+        ErrHandler("500");
+        return false;
+      }
+
+      pid_t pid = fork();
+      if(pid < 0) {
+        //创建子进程失败
+        ErrHandler("500");
+        return false;
+      }
+      if(pid == 0) {
+        //子进程
+        //使用环境变量传递头信息
+        setenv("METHOD", req_info._method.c_str(), 1);  //请求方法
+        setenv("VERSION", req_info._version.c_str(), 1);  //协议版本
+        setenv("PATH_INFO", req_info._path_info.c_str(), 1);  //路径信息
+        setenv("QUERY_STRING", req_info._query_string.c_str(), 1); //请求字符串
+        for(auto it = req_info._hdr_list.begin(); it != req_info._hdr_list.end(); ++it) {
+          setenv(it->first.c_str(), it->second.c_str(), 1);
+        }
+        close(in[1]); //关闭in的读端
+        close(out[0]);  //关闭out的写端
+        dup2(in[0], 0); //将in[0]重定向至子进程的标准输入
+        dup2(out[1], 1);  //重定向out[1]至子进程的标准输出
+        execl(req_info._path_phys.c_str(), req_info._path_phys.c_str(), NULL);
+        exit(0);
+      }
+
+      //父进程
+      close(in[0]);
+      close(out[1]);
+      //通过管道将正文传递给子进程
+      char buf[MAX_BUFF] = {0};
+      while(wait(NULL) == pid);
+      /*
+      auto it = req_info._hdr_list.find("Content-Length");
+      if(it != req_info._hdr_list.end()) {
+        int64_t content_len = Utils::StrToNum(it->second);
+        int rlen = recv(_cli_sock, buf, MAX_BUFF, 0);
+        if(rlen <= 0) {
+          //返回错误信息
+          //TODO
+          return false;
+        }
+        if(write(in[1], buf, rlen) < 0) {
+          return false;
+        }
+      }
+      */
+
+      // 通过out管道返回子进程的处理结果直到返回0
+      // 组织响应Http数据，并返回给客户端
+      std::string rsp_hdr;
+      // 组织头部信息
+      rsp_hdr = "HTTP/1.1 200 OK\r\n";
+      rsp_hdr += "Content-Type: text/plain";
+      std::string date_gmt;
+      time_t t = time(NULL);
+      Utils::TimeToGMT(t, date_gmt);
+      rsp_hdr += "Date: ";
+      rsp_hdr += date_gmt;
+      rsp_hdr += "\r\n\r\n";
+      SendData(rsp_hdr);  //传递头信息
+
+      /*
+      while(1) {  //为了检测管道写端关闭
+        char buf[MAX_BUFF] = {0};
+        int rlen = read(out[0], buf, MAX_BUFF);
+        if(rlen == 0) {
+          break;
+        }
+
+        send(_cli_sock, buf, MAX_BUFF, 0);
+      }
+      */
+
+      std::string rsp_body;
+      rsp_body = "Sucess";
+      return true;
+    }
+    bool CGIHandler(const RequestInfo& req_info) {
+      return ProcessCGI(req_info);
+    }
     bool ProcessFile(const std::string& file_path) {
       std::string file_hdr;
 
@@ -220,35 +318,37 @@ class HttpResponse {
 
       return true;
     }
-    bool ProcessList(const std::string& file_path) {
+    bool ProcessList(const std::string& file_path_info, const std::string& file_path_phys) {
       std::string list_hdr;
       std::string list_body;
-
-      OrganizeListHdr(list_hdr, file_path);
-      OrganizeListBody(list_body, file_path);
-      
+      OrganizeListHdr(list_hdr, file_path_phys);
+      OrganizeListBody(list_body, file_path_info, file_path_phys);
+       
       SendData(list_hdr);
       SendData(list_body);
       return true;
     }
-    bool FileHandler(std::string file_path, struct stat & file_st) {
+    bool FileHandler(std::string file_path_info, std::string file_path_phys, struct stat & file_st) {
       //判断目标资源是文件还是目录
+      cout << file_path_info << endl;
+      cout << file_path_phys << endl;
       if(file_st.st_mode & S_IFDIR) {
         //是一个目录
-        if(file_path.back() != '/') {
-          file_path += "/";
+        if(file_path_info.back() != '/') {
+          file_path_info += "/";
         }
-        if(ProcessList(file_path) == false) {
+        if(file_path_phys.back() != '/') {
+          file_path_phys += "/";
+        }
+        if(ProcessList(file_path_info, file_path_phys) == false) {
           return false;
         }
-        cout << "ListHandler success" << endl;
         return true;
       }
 
-      if(ProcessFile(file_path) == false) {
+      if(ProcessFile(file_path_phys) == false) {
         return false;
       }
-      cout << "FileHandler success" << endl;
       return true;
     }
     bool ErrHandler(const std::string &err_code) {
@@ -328,19 +428,25 @@ class HttpResponse {
       list_hdr += "Content-Type: text/html\r\n\r\n";
       return true;
     }
-    bool OrganizeListBody(std::string& list_body, const std::string& file_path) {
-      std::string path = file_path;
+    bool OrganizeListBody(std::string& list_body,const std::string& file_path_info, const std::string& file_path_phys) {
+      std::string path_phys = file_path_phys;
+      std::string path_info = file_path_info;
       struct dirent **p_dirent = NULL;
-      int num = scandir(path.c_str(), &p_dirent, 0, alphasort);
+      int num = scandir(path_phys.c_str(), &p_dirent, 0, alphasort);
 
       list_body += "<html><body><h1>Index:/";
       list_body += "</h1>";
+      list_body += "<input type='file' name='FileUpload' />";
+      list_body += "<input type='submit' value='upload' />";
+      list_body += "<form action='/uoload' method='post' ";
+      list_body += "enctype='multipart/form-data'>";
       list_body += "<hr /><ol>";
 
       for(int i =0; i < num; ++i) {
         list_body += "<li>";
         //当前文件文件文件全路径
-        std::string file = path + p_dirent[i]->d_name;
+        std::string file = path_phys + p_dirent[i]->d_name;
+        cout << file << endl;
         struct stat st;
         if(stat(file.c_str(), &st) < 0) {
           continue;
@@ -348,14 +454,23 @@ class HttpResponse {
 
         //std::string mtime;
         list_body += "<strong><a href='";
+        list_body += file_path_info.c_str();
         list_body += p_dirent[i]->d_name;
+
         list_body += "'>";
         list_body += p_dirent[i]->d_name;
+        cout << p_dirent[i]->d_name << endl;
         list_body += "</a></strong>";
         std::string mtime;
         Utils::TimeToGMT(st.st_ctime, mtime);
+
+        std::string sz_str;
+        Utils::NumToStr(st.st_size, sz_str);
         list_body += "<br><small>";
         list_body += mtime;
+        list_body += " size: ";
+        list_body += sz_str.c_str();
+        list_body += " bytes";
         list_body += "</small>";
         list_body += "</li><br>";
         
@@ -414,73 +529,23 @@ class HttpResponse {
       if((req_info._method == "GET" && !req_info._query_string.empty()) || \
           req_info._method == "POST") {
         //处理CGI请求
-        //CGIHandler(req_info);
+        CGIHandler(req_info);
         return true;
       }
 
       //判断请求资源是否存在
       std::string file_path = req_info._path_phys;
+      
       struct stat file_st;
       if(stat(file_path.c_str(), &file_st) < 0) {
         //请求资源不存在，返回404页面
         ErrHandler("404");
-        cout << "errhandler success" << endl;
         return true;
       }
 
-      FileHandler(req_info._path_phys, file_st);
+      FileHandler(req_info._path_info, req_info._path_phys, file_st);
       return true;
     }
 };
-/*
 
-void MakeErrPage(std::string& err_page, const std::string& err_code) {
-  err_page += "";
-}
-
-void MakeErrHdr(std::string& err_hdr, const std::string& err_code) {
-  err_hdr += "HTTP/1.1 "; //组织首行
-  err_hdr += err_hdr;
-  err_hdr += " ";
-  err_hdr += ErrorCode[err_code];
-  err_hdr += "\r\n";
-
-  std::string date_gmt; //组织Date标签信息
-  Utils::TimeToGMT(date_gmt);
-  err_hdr += date_gmt;
-  err_hdr += "\r\n";
-}
-
-bool SendErrorPage(int sock, const std::string err_code) {
-  std::string err_page;
-  std::string err_hdr;
-  MakeErrHdr(err_hdr, err_code);
-  
-
-  MakeErrPage(err_page, err_code);
-}
-
-bool FileRequest(int sock, const RequestInfo& hdr_info) {
-  //判断是文件请求还是列表请求
-  std::string path = hdr_info._path_phys;
-  struct stat file_st;
-  if(stat(hdr_info._path_phys.c_str(), &file_st) == -1) {
-    //说明文件不存在，返回404页面
-    
-    SendErrorPage(sock, "404");
-    return false;
-  }
-
-  //判断是文件还是目录
-  if(file_st.st_mode & S_IFDIR) {
-    //说明是目录
-    //ListProcess();
-  }
-
-  //FileProcess();
-  //TODO
-  return true;
-}
-
-*/
 #endif
