@@ -257,30 +257,40 @@ class HttpResponse {
       close(in[0]);
       close(out[1]);
       //通过管道将正文传递给子进程
-      char buf[MAX_BUFF] = {0};
-      while(wait(NULL) == pid);
-      /*
+      //Content-length记录正文的长度
       auto it = req_info._hdr_list.find("Content-Length");
+
       if(it != req_info._hdr_list.end()) {
+        char buf[MAX_BUFF] = {0};
+        //正文长度
         int64_t content_len = Utils::StrToNum(it->second);
-        int rlen = recv(_cli_sock, buf, MAX_BUFF, 0);
-        if(rlen <= 0) {
-          //返回错误信息
-          //TODO
-          return false;
-        }
-        if(write(in[1], buf, rlen) < 0) {
-          return false;
+        int tlen = 0; //content_length - tlen 表示剩余的正文长度
+        while(tlen < content_len) {
+          int len = MAX_BUFF > (content_len - tlen) ? (content_len - tlen) : MAX_BUFF;
+
+          int rlen = recv(_cli_sock, buf, len, 0);
+          if(rlen <= 0) {
+            //返回错误信息,content-length与实际正文长度不匹配
+            //TODO
+            return false;
+          }
+          if(write(in[1], buf, rlen) < 0) {
+            return false;
+          }
+          tlen += len;  //tlen记录已经接受的正文长度
         }
       }
-      */
+      else{
+        //请求中不包含content-length字段
+        //TODO
+      }
 
       // 通过out管道返回子进程的处理结果直到返回0
       // 组织响应Http数据，并返回给客户端
       std::string rsp_hdr;
       // 组织头部信息
       rsp_hdr = "HTTP/1.1 200 OK\r\n";
-      rsp_hdr += "Content-Type: text/plain";
+      rsp_hdr += "Content-Type: text/html\r\n";
       std::string date_gmt;
       time_t t = time(NULL);
       Utils::TimeToGMT(t, date_gmt);
@@ -289,7 +299,6 @@ class HttpResponse {
       rsp_hdr += "\r\n\r\n";
       SendData(rsp_hdr);  //传递头信息
 
-      /*
       while(1) {  //为了检测管道写端关闭
         char buf[MAX_BUFF] = {0};
         int rlen = read(out[0], buf, MAX_BUFF);
@@ -299,10 +308,10 @@ class HttpResponse {
 
         send(_cli_sock, buf, MAX_BUFF, 0);
       }
-      */
 
       std::string rsp_body;
-      rsp_body = "Sucess";
+      rsp_body = "<html><body><h1>success!</h1></body></html>";
+      SendData(rsp_body);
       return true;
     }
     bool CGIHandler(const RequestInfo& req_info) {
@@ -330,8 +339,6 @@ class HttpResponse {
     }
     bool FileHandler(std::string file_path_info, std::string file_path_phys, struct stat & file_st) {
       //判断目标资源是文件还是目录
-      cout << file_path_info << endl;
-      cout << file_path_phys << endl;
       if(file_st.st_mode & S_IFDIR) {
         //是一个目录
         if(file_path_info.back() != '/') {
@@ -436,17 +443,16 @@ class HttpResponse {
 
       list_body += "<html><body><h1>Index:/";
       list_body += "</h1>";
+      list_body += "<form action='/upload' method='post' >";
       list_body += "<input type='file' name='FileUpload' />";
       list_body += "<input type='submit' value='upload' />";
-      list_body += "<form action='/uoload' method='post' ";
-      list_body += "enctype='multipart/form-data'>";
+      list_body += "<enctype='multipart></form-data'>";
       list_body += "<hr /><ol>";
 
       for(int i =0; i < num; ++i) {
         list_body += "<li>";
         //当前文件文件文件全路径
         std::string file = path_phys + p_dirent[i]->d_name;
-        cout << file << endl;
         struct stat st;
         if(stat(file.c_str(), &st) < 0) {
           continue;
@@ -459,7 +465,6 @@ class HttpResponse {
 
         list_body += "'>";
         list_body += p_dirent[i]->d_name;
-        cout << p_dirent[i]->d_name << endl;
         list_body += "</a></strong>";
         std::string mtime;
         Utils::TimeToGMT(st.st_ctime, mtime);
