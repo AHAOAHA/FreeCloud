@@ -121,6 +121,7 @@ class HttpRequest {
     int _cli_sock;
     RequestInfo _req_info;
     std::string _hdr;
+
   public:
     HttpRequest(): _cli_sock(-1) 
     {}
@@ -213,6 +214,8 @@ class HttpResponse {
     std::string _stag;
     std::string _mtime; //最后一次修改时间
     std::string _cont_len;
+    std::string _etag; 
+    std::string _fsize;
 
   private:
     bool ProcessCGI(const RequestInfo& req_info) {
@@ -392,11 +395,13 @@ class HttpResponse {
       Utils::TimeToGMT(t, date_gmt);
       file_hdr += date_gmt;
       file_hdr += "\r\n";
-      file_hdr += "Content-Type: ";
-      std::string file_type;
-      OrganizeFileType(file_name, file_type);
-      file_hdr += file_type;
-      file_hdr += "\r\n\r\n";
+      file_hdr += "Content-Type: application/octet-stream\r\n";
+      file_hdr += "Connection: close\r\n";
+
+      //std::string file_type;
+      //OrganizeFileType(file_name, file_type);
+      //file_hdr += file_type;
+      file_hdr += "\r\n";
     }
     void OrganizeFileType(const std::string& file_name, std::string& file_type) {
       size_t pos = 0;
@@ -443,10 +448,10 @@ class HttpResponse {
 
       list_body += "<html><body><h1>Index:/";
       list_body += "</h1>";
-      list_body += "<form action='/upload' method='post' >";
+      list_body += "<form action='/upload' method='post' ";
+      list_body += "enctype='multipart/form-data'>";
       list_body += "<input type='file' name='FileUpload' />";
-      list_body += "<input type='submit' value='upload' />";
-      list_body += "<enctype='multipart></form-data'>";
+      list_body += "<input type='submit' value='upload' /></form>";
       list_body += "<hr /><ol>";
 
       for(int i =0; i < num; ++i) {

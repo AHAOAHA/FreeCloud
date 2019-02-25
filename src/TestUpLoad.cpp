@@ -26,7 +26,7 @@ class UpLoad {
 
   private:
     int MatchBoundry(char* buf, int blen, int& boundry_pos) {
-      if(memcmp(buf, _first_boundry.c_str(), _first_boundry.length())) {
+      if(!memcmp(buf, _first_boundry.c_str(), _first_boundry.length())) {
         return BOUNDRY_FIRST;
       }
 
@@ -37,9 +37,11 @@ class UpLoad {
         //就进行全匹配
         if((blen - i) > _middle_boundry.length()) {
           if(!memcmp(buf+i, _middle_boundry.c_str(), _middle_boundry.length())) {
+            boundry_pos = i;
             return BOUNDRY_MIDDLE;
           }
           else if(!memcmp(buf+i, _last_boundry.c_str(), _last_boundry.length())) {
+            boundry_pos = i;
             return BOUNDRY_LAST;
           }
         }
@@ -47,6 +49,7 @@ class UpLoad {
         else {
           int cmp_len = (blen - i) > _middle_boundry.length() ? _middle_boundry.length() : (blen - i);
           if(!memcmp(buf + i, _last_boundry.c_str(), cmp_len)) {
+            boundry_pos = i;
             return BOUNDRY_BAK;
           }
         }
@@ -62,6 +65,7 @@ class UpLoad {
           return false;
         }
 
+        cerr << "get filename" << endl;
         content_pos = (ptr - buf) + 4;
         std::string header;
         header.assign(buf, ptr - buf);
@@ -73,14 +77,16 @@ class UpLoad {
         }
 
         _file_name = header.substr(pos + file_sep.length());
-        pos = _file_name.find("\"");
-        if(pos = std::string::npos) {
+        
+        pos = _file_name.find('\"');
+        if(pos == std::string::npos) {
           return false;
         }
         
         _file_name.erase(pos);
+        _file_name = "./www/" + _file_name;
+        cerr << "file_name[last]: " << _file_name << endl;
 
-        cerr << _file_name << endl;
         return true;
       }
 
@@ -88,7 +94,6 @@ class UpLoad {
         umask(0);
         _file_fd = open(_file_name.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0664);
         if(_file_fd < 0) {
-          cerr << "open fail" << endl;
           return false;
         }
         return true;
@@ -116,17 +121,15 @@ class UpLoad {
     bool InitUpLoadInfo() {
       char* ptr = getenv("Content-Length");
       if(ptr == NULL) {
-        cerr << "content-length zero" << endl;
         return false;
       }
       content_len = Utils::StrToNum(ptr);
 
-      std::string boundry_sep = "boundry=";
-      std::string content_type = ptr;
+      std::string boundry_sep = "boundary=";
+      std::string content_type = getenv("Content-Type");
 
       size_t pos = content_type.find(boundry_sep);
       if(pos == std::string::npos) {
-        cerr << "have no boundry" << endl;
         return false;
       }
       std::string boundry = content_type.substr(pos + boundry_sep.length());
@@ -145,23 +148,24 @@ class UpLoad {
 
       while(tlen < content_len) {
         int len = read(0, buf+blen, MAX_BUFF - blen);
-        blen += len;
-        int boundry_pos = 0;
-        int content_pos = 0;
+        blen = len;
+        int boundry_pos = 0;  //记录boundry的位置
+        int content_pos = 0;  //记录正文位置
 
         int flag = MatchBoundry(buf, blen, boundry_pos);
         if(flag == BOUNDRY_FIRST) {
           //1. 从boundry中获取文件名
           //2. 如果获取信息成功，则创建文件并打开文件
           //3. 将头部信息从buf中移除，其余进行下一步匹配
+          cerr << "get first boundry" << endl;
           if(GetFileName(buf, content_pos)) {
             CreateFile();
-            blen -= content_len;
+            blen -= content_pos;
             memmove(buf, buf+content_pos, blen);
           }
           else {
             blen -= _first_boundry.length();
-            memmove(buf, buf+boundry_pos, len);
+            memmove(buf, buf+content_len, blen);
           }
         }
 
@@ -223,6 +227,7 @@ int main()
     //组织页面
     return -1;
   }
+
 
   return 0;
 }
