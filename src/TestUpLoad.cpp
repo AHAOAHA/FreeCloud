@@ -25,12 +25,12 @@ class UpLoad {
     std::string _file_name;
 
   private:
-    int MatchBoundry(char* buf, int blen, int& boundry_pos) {
+    int MatchBoundry(char* buf, const int& blen, int& boundry_pos) {
       if(!memcmp(buf, _first_boundry.c_str(), _first_boundry.length())) {
+        boundry_pos = 0;
         return BOUNDRY_FIRST;
       }
 
-      boundry_pos = 0;
 
       for(int i = 0; i < blen; ++i) {
         //如果剩余的字符长度大于boundry的长度
@@ -54,6 +54,9 @@ class UpLoad {
           }
         }
       }
+
+      boundry_pos = blen;
+
       return BOUNDRY_NO;
     }
     
@@ -91,6 +94,7 @@ class UpLoad {
       }
 
       bool CreateFile() {
+        cerr << "create file" << endl;
         umask(0);
         _file_fd = open(_file_name.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0664);
         if(_file_fd < 0) {
@@ -141,63 +145,73 @@ class UpLoad {
     }
 
     bool ProcessUpload() {
-      int64_t tlen = 0;
-      int64_t blen = 0;
+      int64_t tlen = 0; //记录当前已经写入的字节数
+      int64_t blen = 0; //记录当前buff中的字节数
+
+      int boundry_pos = 0;  //记录当前boundry的位置
+      int content_pos = 0;  //记录当前正文的位置
 
       char buf[MAX_BUFF] = {0};
 
       while(tlen < content_len) {
-        int len = read(0, buf+blen, MAX_BUFF - blen);
-        blen = len;
-        int boundry_pos = 0;  //记录boundry的位置
-        int content_pos = 0;  //记录正文位置
+        int len = read(0, buf + blen, MAX_BUFF - blen);
+        blen += len;  //blen为上一次缓冲区中的内容加上本次所读取的内容
+        buf[blen] = '\0'; //将缓冲区中可用的内容组织成C形式字符串
 
         int flag = MatchBoundry(buf, blen, boundry_pos);
         if(flag == BOUNDRY_FIRST) {
-          //1. 从boundry中获取文件名
-          //2. 如果获取信息成功，则创建文件并打开文件
-          //3. 将头部信息从buf中移除，其余进行下一步匹配
           cerr << "get first boundry" << endl;
+          //说明当前boundry是文件的开始
+          blen -= boundry_pos;
+          memmove(buf, buf + boundry_pos, blen); //将读取到的boundry从缓冲区中拿走
+          boundry_pos = blen;
+          buf[blen] = '\0';
           if(GetFileName(buf, content_pos)) {
-            CreateFile();
             blen -= content_pos;
-            memmove(buf, buf+content_pos, blen);
+            memmove(buf, buf + content_pos, blen);
+            content_pos = blen;
+            buf[blen] = '\0';
+            CreateFile();
           }
           else {
-            blen -= _first_boundry.length();
-            memmove(buf, buf+content_len, blen);
+            //该段落中没有filename
+            //TODO
           }
         }
 
         while(1) {
           flag = MatchBoundry(buf, blen, boundry_pos);
-          if(flag != BOUNDRY_MIDDLE) {
-            break;
-          }
-          //匹配middle_boundry成功
-          WriteFile(buf, boundry_pos);
-          CloseFile();
-          blen -= boundry_pos;
-          memmove(buf, buf+boundry_pos, blen);
-          if(GetFileName(buf, content_pos)) {
-            CreateFile();
-            blen -= content_pos;
-            memmove(buf, buf + content_pos, blen);
+          if(flag == BOUNDRY_MIDDLE) {
+            //找到第一个文件的结尾
+            WriteFile(buf, boundry_pos);
+            blen -= boundry_pos;
+            memmove(buf, buf + boundry_pos, blen);
+            boundry_pos = blen;
+            buf[blen] = '\0';
+            CloseFile();
+            if(GetFileName(buf, content_pos)) {
+              cout << "file create" << endl;
+              CreateFile();
+              blen -= content_pos;
+              memmove(buf, buf + content_pos, blen);
+              content_pos = blen;
+              buf[blen] = '\0';
+            }
+            else {
+              //未找到对应文件名
+              //TODO
+            }
           }
           else {
-            if(content_pos == 0) {
-              break;
-            }
-            blen -= +_middle_boundry.length();
-            memmove(buf, buf+content_pos, blen);
+            break;
           }
         }
 
         flag = MatchBoundry(buf, blen, boundry_pos);
         if(flag == BOUNDRY_LAST) {
+          cerr << "------ get last boundry" << endl;
           WriteFile(buf, boundry_pos);
-          blen -= boundry_pos;
-          memmove(buf, buf + boundry_pos, blen);
+          CloseFile();
           return true;
         }
 
@@ -207,8 +221,102 @@ class UpLoad {
           blen = 0;
         }
 
-        blen += len;
+        flag = MatchBoundry(buf, blen, boundry_pos);
+        if(flag == BOUNDRY_BAK) {
+          //将该条boundry之前的内容写入文件
+          //取出buf中，boundry之前的内容
+          WriteFile(buf, boundry_pos);
+          blen -= boundry_pos;
+          memmove(buf, buf + boundry_pos, blen);
+          boundry_pos = blen;
+          buf[blen] = '\0';
+        }
+        tlen += len;
       }
+      /*
+
+      while(tlen < content_len) {
+        cerr <<"Content-Length: "<< content_len << endl;
+        int len = read(0, buf+blen, MAX_BUFF - blen); //blen代表buf中剩余的有效数据
+        blen += len;
+        buf[blen] = '\0';
+
+        int boundry_pos = 0;  //记录boundry的位置
+        int content_pos = 0;  //记录正文位置
+
+        int flag = MatchBoundry(buf, blen, boundry_pos);
+        if(flag == BOUNDRY_FIRST) {
+          //1. 从boundry中获取文件名
+          //2. 如果获取信息成功，则创建文件并打开文件
+          //3. 将头部信息从buf中移除，其余进行下一步匹配
+          if(GetFileName(buf, content_pos)) {
+            CreateFile();
+            blen -= content_pos;
+            memmove(buf, buf+content_pos, content_pos);
+            buf[blen] = '\0';
+            content_pos = 0;
+          }
+          else {
+            blen -= content_pos;
+            memmove(buf, buf+content_pos, content_pos);
+            buf[blen] = '\0';
+          }
+        }
+
+        
+        while(1) {
+          flag = MatchBoundry(buf, blen, boundry_pos);
+          if(flag != BOUNDRY_MIDDLE) {
+            cerr << "break" << endl;
+            break;
+          }
+          //匹配middle_boundry成功
+          cerr << "search middle boundary" << endl;
+          WriteFile(buf, boundry_pos);
+          CloseFile();
+          blen -= boundry_pos;
+          memmove(buf, buf+boundry_pos, boundry_pos);
+          buf[blen] = '\0';
+          if(GetFileName(buf, content_pos)) {
+            CreateFile();
+            blen -= content_pos;
+            memmove(buf, buf + content_pos, content_pos);
+            buf[blen] = '\0';
+          }
+          else {
+            if(content_pos == 0) {
+              break;
+            }
+            blen -= _middle_boundry.length();
+            memmove(buf, buf+content_pos, content_pos);
+            buf[blen] = '\0';
+          }
+        }
+
+        flag = MatchBoundry(buf, blen, boundry_pos);
+        if(flag == BOUNDRY_LAST) {
+          WriteFile(buf, boundry_pos);
+          CloseFile();
+          blen -= boundry_pos;
+          memmove(buf, buf + boundry_pos, blen);
+          buf[blen] = '\0';
+          return true;
+        }
+
+        flag = MatchBoundry(buf, blen, boundry_pos);
+        if(flag == BOUNDRY_NO) {
+          cerr << "----Blen" << blen << endl;
+          WriteFile(buf, blen);
+          blen = 0;
+          boundry_pos = 0;
+        }
+
+        tlen += len;
+        cerr << "tlen: " << tlen << endl;
+      }
+    */
+
+
 
       return false;
     }
@@ -223,10 +331,14 @@ int main()
     return -1;
   }
 
+  cerr << "init success" << endl;
+
   if(upload.ProcessUpload() == false) {
     //组织页面
     return -1;
   }
+
+  cerr << "process success" << endl;
 
 
   return 0;

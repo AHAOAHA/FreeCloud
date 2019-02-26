@@ -218,6 +218,10 @@ class HttpResponse {
     std::string _fsize;
 
   private:
+
+    static void sig_handle(int sig) {
+      wait(NULL);
+    }
     bool ProcessCGI(const RequestInfo& req_info) {
       //使用外部程序完成CGI请求
       //将HTTP头信息和正文全部交给子进程处理
@@ -226,6 +230,7 @@ class HttpResponse {
       //使用管道接受返回信息
       int in[2];
       int out[2];
+      signal(SIGCHLD, sig_handle);
       if(pipe(in) || pipe(out)) {
         //创建管道失败
         ErrHandler("500");
