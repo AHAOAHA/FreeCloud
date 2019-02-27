@@ -87,8 +87,25 @@ class UpLoad {
         }
         
         _file_name.erase(pos);
-        _file_name = "./www/" + _file_name;
-        cerr << "file_name[last]: " << _file_name << endl;
+        char* ptr_path = getenv("Referer");
+        std::string prev_url = ptr_path;
+
+        pos = prev_url.find("://");
+        if(pos == std::string::npos) {
+          //Referer中链接不完整
+          return false;
+        }
+
+        prev_url.erase(pos, 3);
+        cerr << prev_url << endl;
+        pos = prev_url.find('/');
+        
+        std::string prev_path = prev_url.substr(pos);
+        prev_path = "./www" + prev_path;
+        prev_path += '/';
+        _file_name = prev_path + _file_name;
+
+        cerr << "path_info: " << _file_name;
 
         return true;
       }
@@ -233,91 +250,6 @@ class UpLoad {
         }
         tlen += len;
       }
-      /*
-
-      while(tlen < content_len) {
-        cerr <<"Content-Length: "<< content_len << endl;
-        int len = read(0, buf+blen, MAX_BUFF - blen); //blen代表buf中剩余的有效数据
-        blen += len;
-        buf[blen] = '\0';
-
-        int boundry_pos = 0;  //记录boundry的位置
-        int content_pos = 0;  //记录正文位置
-
-        int flag = MatchBoundry(buf, blen, boundry_pos);
-        if(flag == BOUNDRY_FIRST) {
-          //1. 从boundry中获取文件名
-          //2. 如果获取信息成功，则创建文件并打开文件
-          //3. 将头部信息从buf中移除，其余进行下一步匹配
-          if(GetFileName(buf, content_pos)) {
-            CreateFile();
-            blen -= content_pos;
-            memmove(buf, buf+content_pos, content_pos);
-            buf[blen] = '\0';
-            content_pos = 0;
-          }
-          else {
-            blen -= content_pos;
-            memmove(buf, buf+content_pos, content_pos);
-            buf[blen] = '\0';
-          }
-        }
-
-        
-        while(1) {
-          flag = MatchBoundry(buf, blen, boundry_pos);
-          if(flag != BOUNDRY_MIDDLE) {
-            cerr << "break" << endl;
-            break;
-          }
-          //匹配middle_boundry成功
-          cerr << "search middle boundary" << endl;
-          WriteFile(buf, boundry_pos);
-          CloseFile();
-          blen -= boundry_pos;
-          memmove(buf, buf+boundry_pos, boundry_pos);
-          buf[blen] = '\0';
-          if(GetFileName(buf, content_pos)) {
-            CreateFile();
-            blen -= content_pos;
-            memmove(buf, buf + content_pos, content_pos);
-            buf[blen] = '\0';
-          }
-          else {
-            if(content_pos == 0) {
-              break;
-            }
-            blen -= _middle_boundry.length();
-            memmove(buf, buf+content_pos, content_pos);
-            buf[blen] = '\0';
-          }
-        }
-
-        flag = MatchBoundry(buf, blen, boundry_pos);
-        if(flag == BOUNDRY_LAST) {
-          WriteFile(buf, boundry_pos);
-          CloseFile();
-          blen -= boundry_pos;
-          memmove(buf, buf + boundry_pos, blen);
-          buf[blen] = '\0';
-          return true;
-        }
-
-        flag = MatchBoundry(buf, blen, boundry_pos);
-        if(flag == BOUNDRY_NO) {
-          cerr << "----Blen" << blen << endl;
-          WriteFile(buf, blen);
-          blen = 0;
-          boundry_pos = 0;
-        }
-
-        tlen += len;
-        cerr << "tlen: " << tlen << endl;
-      }
-    */
-
-
-
       return false;
     }
 };
