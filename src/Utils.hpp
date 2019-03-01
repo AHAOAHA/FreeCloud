@@ -7,6 +7,7 @@
 #ifndef __UTILS_HPP__
 #define __UTILS_HPP__
 
+#include <sstream>
 #include <sys/wait.h>
 #include <sys/sendfile.h>
 #include <dirent.h>
@@ -213,21 +214,30 @@ class HttpResponse {
     int _cli_sock;
     std::string _stag;
     std::string _mtime; //最后一次修改时间
+    std::string _mime;
     std::string _cont_len;
     std::string _etag; 
     std::string _fsize;
+    std::string _path_info;
+    std::string _path_phys;
+    struct stat _file_st;
+    bool _file_exist = true;
+    bool _is_cgi = false;
+
+    RequestInfo _req_info;  //请求信息
 
   private:
 
     static void sig_handle(int sig) {
       wait(NULL);
     }
-    bool ProcessCGI(const RequestInfo& req_info) {
+    bool ProcessCGI() {
       //使用外部程序完成CGI请求
       //将HTTP头信息和正文全部交给子进程处理
       //使用环境变量传递头信息
       //使用管道传递正文
       //使用管道接受返回信息
+      RequestInfo req_info = _req_info;
       int in[2];
       int out[2];
       signal(SIGCHLD, sig_handle);
@@ -322,8 +332,8 @@ class HttpResponse {
       SendData(rsp_body);
       return true;
     }
-    bool CGIHandler(const RequestInfo& req_info) {
-      return ProcessCGI(req_info);
+    bool CGIHandler() {
+      return ProcessCGI();
     }
     bool ProcessFile(const std::string& file_path) {
       std::string file_hdr;
@@ -338,6 +348,8 @@ class HttpResponse {
     bool ProcessList(const std::string& file_path_info, const std::string& file_path_phys) {
       std::string list_hdr;
       std::string list_body;
+
+
       OrganizeListHdr(list_hdr, file_path_phys);
       OrganizeListBody(list_body, file_path_info, file_path_phys);
        
@@ -345,9 +357,13 @@ class HttpResponse {
       SendData(list_body);
       return true;
     }
-    bool FileHandler(std::string file_path_info, std::string file_path_phys, struct stat & file_st) {
+
+    bool FileHandler() {
       //判断目标资源是文件还是目录
-      if(file_st.st_mode & S_IFDIR) {
+      std::string file_path_info = _path_info;
+      std::string file_path_phys = _path_phys;
+      
+      if(_file_st.st_mode & S_IFDIR) {
         //是一个目录
         if(file_path_info.back() != '/') {
           file_path_info += "/";
@@ -366,10 +382,11 @@ class HttpResponse {
       }
       return true;
     }
-    bool ErrHandler(const std::string &err_code) {
+    bool ErrHandler(char const  * const  err_code_c) {
       //组织err头部信息
       std::string err_hdr;
       std::string err_body;
+      std::string err_code(err_code_c);
 
       OrganizeErrHdr(err_code, err_hdr);
       OrganizeErrBody(err_code, err_body);
@@ -393,7 +410,8 @@ class HttpResponse {
       return true;
     }
     bool OrganizeFileHdr(const std::string& file_name, std::string& file_hdr) {
-      file_hdr += "HTTP/1.1 200 OK\r\n";
+      file_hdr += _req_info._version;
+      file_hdr += " 200 OK\r\n";
       file_hdr += "Date: ";
       std::string date_gmt;
       time_t t = time(NULL);
@@ -402,10 +420,10 @@ class HttpResponse {
       file_hdr += "\r\n";
       file_hdr += "Content-Type: application/octet-stream\r\n";
       file_hdr += "Connection: close\r\n";
+      file_hdr += "etag: ";
+      file_hdr += _etag;
+      file_hdr += "\r\n";
 
-      //std::string file_type;
-      //OrganizeFileType(file_name, file_type);
-      //file_hdr += file_type;
       file_hdr += "\r\n";
     }
     void OrganizeFileType(const std::string& file_name, std::string& file_type) {
@@ -435,14 +453,29 @@ class HttpResponse {
       }
     }
     bool OrganizeListHdr(std::string& list_hdr, const std::string& file_path) {
-      list_hdr = "HTTP/1.1 200 OK\r\n";
+      list_hdr = "HTTP/1.1";
+      list_hdr += " 200 OK\r\n";
       list_hdr += "Date: ";
       std::string date_gmt;
       time_t t = time(NULL);
       Utils::TimeToGMT(t, date_gmt);
       list_hdr += date_gmt;
       list_hdr += "\r\n";
-      list_hdr += "Content-Type: text/html\r\n\r\n";
+      list_hdr += "Content-Type: text/html; charset=utf-8\r\n";
+      list_hdr += "ETag: ";
+      list_hdr += _etag;
+      list_hdr += "\r\n";
+      list_hdr += "Connection: close\r\n";
+      list_hdr += "Keep-Alive: timeout=20\r\n";
+      //if(_req_info._version == "HTTP/1.1") {
+      //  list_hdr += "Transfer-Encoding: chunked\r\n";
+      //}
+      list_hdr += "Last-Modified: ";
+      list_hdr += _mtime;
+      list_hdr += "\r\n";
+
+
+      list_hdr += "\r\n";
       return true;
     }
     bool OrganizeListBody(std::string& list_body,const std::string& file_path_info, const std::string& file_path_phys) {
@@ -495,7 +528,7 @@ class HttpResponse {
     }
     void OrganizeErrHdr(const std::string &err_code, std::string& err_hdr) {
       //首行
-      err_hdr += "HTTP/1.1";
+      err_hdr += _req_info._version;
       err_hdr += " ";
       err_hdr += err_code;
       err_hdr += " ";
@@ -511,8 +544,6 @@ class HttpResponse {
       err_hdr += "Date: ";
       err_hdr += date_gmt;
       err_hdr += "\r\n\r\n";
-
-      
     }
 
     void OrganizeErrBody(const std::string &err_code, std::string& err_body) {
@@ -530,35 +561,94 @@ class HttpResponse {
       return true;
     }
 
+    void MakeETag() {
+      std::stringstream ss;
+      ss << "\"";
+      ss << std::hex << _file_st.st_ino;
+      ss << "-";
+      ss << std::hex << _file_st.st_size;
+      ss << "-";
+      ss << std::hex << _file_st.st_mtime;
+      ss << "\"";
+      _etag = ss.str();
+    }
+
+    void GetMime() {
+      std::string file(_path_info);
+      size_t pos = file.find_last_of('.');
+      if(pos == std::string::npos) {
+        //没有文件的类型，设置为二进制流式文件
+        _mime = FileType["unknown"];
+        return;
+      }
+
+      std::string suffix = file.substr(pos);
+
+      auto it = FileType.begin();
+      for(it = FileType.begin(); it != FileType.end(); ++it) {
+        if(it->first == suffix) {
+          break;
+        }
+      }
+      if(it == FileType.end()) {
+        _mime = FileType["unknown"];
+        return;
+      }
+
+      _mime = FileType[suffix];
+    }
+
   public:
     HttpResponse(): _cli_sock(-1)
     {}
 
-    bool HttpResponseInit(int sock) {
+    //std::string _stag;
+    bool HttpResponseInit(int sock, RequestInfo& info) {
+      _req_info = info;
+
+      //int _cli_sock;
       _cli_sock = sock;
+      //对所需要的信息进行初始化
+      //初始化资源路径
+      _path_info = info._path_info;
+      _path_phys = info._path_phys;
+
+      //初始化资源信息,如果没有该资源则返回值为-1
+      if(stat(_path_phys.c_str(), &_file_st) < 0) {
+        _file_exist = false;
+        //返回404信息
+        ErrHandler("404");
+        return false;
+      }
+      //std::string _mtime; //最后一次修改时间
+      Utils::TimeToGMT(_file_st.st_mtime, _mtime);
+      //std::string _fsize; 文件大小
+      Utils::NumToStr(_file_st.st_size, _fsize);
+      
+      //判断是否为CGI请求
+      if((info._method == "GET" && !info._query_string.empty()) || \
+          info._method == "POST") {
+        _is_cgi = true;
+      }
+      
+      //std::string _etag; 
+      MakeETag();
+
+      //std::string _mime; 文件类型
+      GetMime();
+      //std::string _cont_len;
+      
       return true;
     }
 
-    bool ResponseHandler(const RequestInfo& req_info) {
-      //判断是否为CGI请求
-      if((req_info._method == "GET" && !req_info._query_string.empty()) || \
-          req_info._method == "POST") {
-        //处理CGI请求
-        CGIHandler(req_info);
+    bool ResponseHandler() {
+
+      if(_is_cgi == true) {
+        CGIHandler();
         return true;
       }
 
-      //判断请求资源是否存在
-      std::string file_path = req_info._path_phys;
-      
-      struct stat file_st;
-      if(stat(file_path.c_str(), &file_st) < 0) {
-        //请求资源不存在，返回404页面
-        ErrHandler("404");
-        return true;
-      }
-
-      FileHandler(req_info._path_info, req_info._path_phys, file_st);
+      FileHandler();
       return true;
     }
 };

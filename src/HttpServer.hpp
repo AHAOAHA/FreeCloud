@@ -75,7 +75,6 @@ bool handler(int sock) {
   HttpResponse rsp;
   RequestInfo req_info;
   req.HttpRequestInit(sock);
-  rsp.HttpResponseInit(sock);
   //接受http请求头
   if(req.FetchHttpHeader() == false) {
     goto end;
@@ -88,7 +87,8 @@ bool handler(int sock) {
 
   req.GetRequestInfo(req_info);
 
-  if(rsp.ResponseHandler(req_info) == false) {
+  rsp.HttpResponseInit(sock, req_info);
+  if(rsp.ResponseHandler() == false) {
     goto end;
   }
 

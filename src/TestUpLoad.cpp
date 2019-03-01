@@ -102,7 +102,6 @@ class UpLoad {
         
         std::string prev_path = prev_url.substr(pos);
         prev_path = "./www" + prev_path;
-        prev_path += '/';
         _file_name = prev_path + _file_name;
 
         cerr << "path_info: " << _file_name;
