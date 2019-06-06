@@ -1,0 +1,9 @@
+# 配置文件
+
+[Service]
+Addr = ":8080"
+# network tcp udp all
+NetWork = "tcp"
+
+[Html]
+title = "<html><h1>Index</h1><hr>"
