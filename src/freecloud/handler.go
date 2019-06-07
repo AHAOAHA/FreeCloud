@@ -1,41 +1,34 @@
 package freecloud
 
 import (
-	//"bufio"
-
 	"config"
 
 	"os"
 )
 
-var err error
 
 type CONTENT_TYPE string
 
-const (
-	BINARY_TYPE = "application/octet-stream"
-	HTML_TYPE = "text/html"
-)
 
 var PATH = config.MyConfig.Service.RootPath
 
-func ListAndDownLoad(ctx *Context) {
+func (ctx *FLServer) ListAndDownLoad() {
 	RelFilePath := ctx.Request.URL.Path
 	FilePath := PATH + RelFilePath
 	FileStat, err := os.Stat(FilePath)
 
 	if err != nil {
 		// 文件不存在或存在一些未知问题
-		Handler404(ctx)
+		ctx.Handler404()
 		return
 	}
 
 	if FileStat.IsDir() {
 		// 建立列表请求
-		ListHandler(ctx, FilePath)
+		ctx.ListHandler()
 		return
 	}
 
 	// 下载请求
-	DownloadHandler(ctx, FilePath)
+	ctx.DownloadHandler()
 }

@@ -1,6 +1,6 @@
 package freecloud
 
-func Handler404(ctx *Context) {
+func (ctx *FLServer) Handler404() {
 	ctx.RspWriter.WriteHeader(404)
 
 	// 设置Header
