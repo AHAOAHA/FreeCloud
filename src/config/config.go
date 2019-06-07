@@ -13,6 +13,7 @@ const ConfigFilePath = "../conf/config.toml"
 type ServiceConf struct {
 	Addr string
 	NetWork string
+	RootPath string
 }
 
 type HtmlInfo struct {

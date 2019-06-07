@@ -6,20 +6,24 @@ import (
 	"net/http"
 )
 
-type Context struct {
+type FLServer struct {
 	context.Context
+
+
+
 	Request *http.Request
 	RspWriter http.ResponseWriter
 }
 
-func (fc Context) ServeHTTP(rspWriter http.ResponseWriter,Req *http.Request) {
+func (fc *FLServer) ServeHTTP(rspWriter http.ResponseWriter,Req *http.Request) {
 	log.Printf("Get a request, req: %s", Req.URL.String())
 	tmpctx, cancel := context.WithCancel(context.Background())
-	ctx := &Context{
+	ctx := &FLServer{
 		Context: tmpctx,
 		Request: Req,
 		RspWriter: rspWriter,
 	}
+	rspWriter.Header().Set("Content-Length", "10000")
 	defer cancel()
 	Method := Req.Method
 	log.Printf("Method: %s", Method)
@@ -30,14 +34,8 @@ func (fc Context) ServeHTTP(rspWriter http.ResponseWriter,Req *http.Request) {
 	}
 }
 
-// 一次仅设置一个header
-func (fc Context) SetHeader(k interface{}, v interface{}) {
-	h := fc.RspWriter.Header()
-	var vSlince []string
-	switch v.(type) {
-	case string: vSlince = append(vSlince, v.(string))
-	case []string: vSlince = v.([]string)
-	}
-	h[k.(string)] = vSlince
+// 设置一个header
+func (fc *FLServer) SetHeader(k , v string) {
+	fc.RspWriter.Header().Set(k, v)
 }
 
