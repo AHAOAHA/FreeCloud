@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"md5"
+	"FreeCloud/src/md5"
 	"os"
-	//"md5"
 )
 
 const (
-	//TODO
-	BINARY_TYPE = ""
-	HTML_TYPE = ""
+	BINARY_TYPE = "application/octet-stream"
+	HTML_TYPE = "text/html"
 )
 
 func (ctx *FLServer)DownloadHandler() {
@@ -22,12 +20,12 @@ func (ctx *FLServer)DownloadHandler() {
 
 	// 完善Header
 	ctx.SetHeader("Content-Type", BINARY_TYPE)
-	md5str, _ := md5.GetMD5(ctx.GetFilePath())
+	md5str, _ := md5.GetMD5(ctx.GetFileRealPath())
 	ctx.SetHeader("Etag", md5str)
 	ctx.SetHeader("Transfer-Encoding", "chunked")
 	ctx.SetHeader("Connection", "Keep-Alive")
 	ctx.SetHeader("Accept-Ranges", "bytes")
-	fileInfo, _ := os.Stat(ctx.GetFilePath())
+	fileInfo, _ := os.Stat(ctx.GetFileRealPath())
 	ctx.SetHeader("Last-Modified", fileInfo.ModTime().String())
 
 	// 写入状态码s
@@ -37,7 +35,7 @@ func (ctx *FLServer)DownloadHandler() {
 	var pos uint64
 	var prevPos uint64
 
-	fileIO, _ := os.Open(ctx.GetFilePath())
+	fileIO, _ := os.Open(ctx.GetFileRealPath())
 	defer  func(){
 		_ = fileIO.Close()
 	}()

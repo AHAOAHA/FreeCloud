@@ -1,8 +1,8 @@
 package service
 
 import (
-	"config"
-	"freecloud"
+	"FreeCloud/src/config"
+	"FreeCloud/src/freecloud"
 	"log"
 	"net/http"
 )

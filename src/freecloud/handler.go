@@ -1,7 +1,7 @@
 package freecloud
 
 import (
-	"config"
+	"FreeCloud/src/config"
 
 	"os"
 )

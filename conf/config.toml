@@ -7,4 +7,4 @@ NetWork = "tcp"
 RootPath = "../wwwroot"
 
 [Html]
-title = "<html><h1>Index</h1><hr>"
+title = "Index"

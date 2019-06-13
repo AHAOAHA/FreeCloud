@@ -1,7 +1,7 @@
 package main
 
 import (
-	"service"
+	"FreeCloud/src/service"
 )
 
 func main() {

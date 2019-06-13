@@ -26,7 +26,7 @@ func (fc *FLServer) ServeHTTP(rspWriter http.ResponseWriter,Req *http.Request) {
 	case "GET":
 		fc.ListAndDownLoad()
 	case "POST":
-		fc.UpLoadCgi()
+		fc.UpLoad()
 	default:
 	}
 }
@@ -40,6 +40,10 @@ func (fc *FLServer) WriteRspFirstHeader(retcode int) {
 	fc.RspWriter.WriteHeader(retcode)
 }
 
-func (fc *FLServer) GetFilePath() string {
+func (fc *FLServer) GetFileRealPath() string {
+	return PATH + fc.FilePath
+}
+
+func (fc *FLServer) GetFileRequestPath() string {
 	return fc.FilePath
 }
